@@ -27,4 +27,54 @@ def forward_kinematics(
         (joint_count, 1, 1),
     )
     world_positions = np.zeros((joint_count, 3), dtype=np.float32)
+
+    # Default traversal order
+    if topological_order is None:
+        children = [[] for i in range(joint_count)]
+        roots = []
+
+        for i, joint in enumerate(joints):
+
+            parent = joint.parent
+
+            if parent == -1 or parent is None:
+                roots.append(i)
+            else:
+                children[parent].append(i)
+
+        order = []
+
+        while roots:
+            current = roots.pop()
+            order.append(current)
+
+            for child in children[current]:
+                roots.append(child)
+
+        topological_order = tuple(order)
+
+    for joint_number in topological_order:
+
+        joint = joints[joint_number]
+        parent_number = joint.parent
+
+        # Root joint
+        if parent_number is None or parent_number == -1:
+
+            world_rotations[joint_number] = local_rotations[joint_number]
+
+            world_positions[joint_number] = root_offset + joint.translation
+
+        # Child joint
+        else:
+
+            parent_rotation = world_rotations[parent_number]
+            parent_position = world_positions[parent_number]
+
+            # Propagate rotation
+            world_rotations[joint_number] = parent_rotation @ local_rotations[joint_number]
+
+            # Propagate position
+            world_positions[joint_number] = parent_position + parent_rotation @ joint.translation
+
     return world_rotations, world_positions
