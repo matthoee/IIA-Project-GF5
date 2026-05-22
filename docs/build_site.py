@@ -39,6 +39,7 @@ PAGES = [
     Page("part2.md", "part2.html", "Part 2", "Part 2"),
     Page("interim.md", "interim.html", "Interim", "Checkpoint"),
     Page("part3_placeholder.md", "part3.html", "Part 3", "Coming later"),
+    Page("faq.md", "faq.html", "FAQ", "Common questions"),
     Page("references.md", "references.html", "References", "Further reading"),
 ]
 
@@ -130,20 +131,61 @@ def youtube_video_id(source: str) -> str:
     return match.group(1) if match else source
 
 
+def youtube_time_seconds(value: str) -> int | None:
+    value = value.strip()
+    if value.isdigit():
+        return int(value)
+
+    total = 0
+    for match in re.finditer(r"(\d+)([hms])", value):
+        amount = int(match.group(1))
+        unit = match.group(2)
+        if unit == "h":
+            total += amount * 3600
+        elif unit == "m":
+            total += amount * 60
+        else:
+            total += amount
+    return total if total else None
+
+
+def youtube_start_seconds(source: str) -> int | None:
+    match = re.search(r"[?&#](?:t|start)=([0-9hms]+)", source.strip())
+    if not match:
+        return None
+    return youtube_time_seconds(match.group(1))
+
+
+def youtube_watch_url(source: str) -> str:
+    video_id = youtube_video_id(source)
+    if start_seconds := youtube_start_seconds(source):
+        return f"https://youtu.be/{video_id}?t={start_seconds}"
+    return f"https://youtu.be/{video_id}"
+
+
 def youtube_embed(markdown: str) -> str:
     fields = split_directive_fields(markdown)
     if not fields or not fields[0]:
         raise SystemExit("YouTube directive is missing a video id")
 
     video_id = html.escape(youtube_video_id(fields[0]), quote=True)
+    query_parts = ["rel=0"]
+    if (start_seconds := youtube_start_seconds(fields[0])) is not None:
+        query_parts.append(f"start={start_seconds}")
+    query = "&".join(query_parts)
     title = fields[1] if len(fields) > 1 and fields[1] else "YouTube video"
     caption = fields[2] if len(fields) > 2 else ""
     title_attr = html.escape(strip_inline_markdown(title), quote=True)
-    caption_html = f"<figcaption>{format_inline(caption)}</figcaption>" if caption else ""
+    fallback_href = html.escape(youtube_watch_url(fields[0]), quote=True)
+    caption_parts = [format_inline(caption)] if caption else []
+    caption_parts.append(
+        f'<a href="{fallback_href}" target="_blank" rel="noreferrer">Open on YouTube</a>'
+    )
+    caption_html = f"<figcaption>{' '.join(caption_parts)}</figcaption>"
     return (
         '<figure class="doc-media-embed youtube-embed">'
         '<div class="doc-media-frame">'
-        f'<iframe src="https://www.youtube-nocookie.com/embed/{video_id}?rel=0" '
+        f'<iframe src="https://www.youtube-nocookie.com/embed/{video_id}?{query}" '
         f'title="{title_attr}" loading="lazy" allowfullscreen '
         'allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; '
         'picture-in-picture; web-share"></iframe>'
@@ -156,7 +198,7 @@ def youtube_embed(markdown: str) -> str:
 SCHEDULE_COLUMNS = [
     ("Tue", "am", "Tue AM", "11-13"),
     ("Fri", "am", "Fri AM", "9-11"),
-    ("Fri", "pm", "Fri PM", "14-16 / 4pm"),
+    ("Fri", "pm", "Fri PM", "14-16 / due"),
 ]
 SCHEDULE_WEEKS = [
     {
@@ -179,12 +221,12 @@ SCHEDULE_WEEKS = [
         "dates": "25-29 May",
         "am": {
             "Tue": [("help", "Help", "11-13, BE454")],
-            "Fri": [("help", "Help", "9-11, BE454")],
+            "Fri": [("help", "Help", "9-10, BE454")],
         },
         "pm": {
             "Fri": [
                 ("mandatory", "Mandatory", "14-16, LR11"),
-                ("deadline", "Interim due", "4pm"),
+                ("deadline", "Interim due", "2pm"),
             ]
         },
     },
@@ -202,11 +244,9 @@ SCHEDULE_WEEKS = [
         "dates": "8-12 Jun",
         "am": {
             "Tue": [("presentation", "Final presentation", "11-13, LR5")],
-            "Fri": [("help", "Help", "9-11, BE454")],
         },
         "pm": {
             "Fri": [
-                ("mandatory", "Mandatory", "14-16, LR11"),
                 ("deadline", "Final report due", "4pm; animation due"),
             ]
         },
@@ -219,9 +259,21 @@ SCHEDULE_CALENDAR_NOTE = (
 
 
 def schedule_calendar_embed(markdown: str = "") -> str:
-    def render_event(kind: str, title: str, meta: str) -> str:
+    fields = split_directive_fields(markdown)
+    highlight_updates = any(field in {"updates", "highlight-updates"} for field in fields[1:])
+    highlighted_events = {
+        ("Week 2", "Fri", "am", "help", "Help", "9-10, BE454"),
+        ("Week 2", "Fri", "pm", "deadline", "Interim due", "2pm"),
+        ("Week 4", "Fri", "pm", "deadline", "Final report due", "4pm; animation due"),
+    }
+    highlighted_empty_cells = {("Week 4", "Fri", "am")}
+
+    def render_event(kind: str, title: str, meta: str, *, highlighted: bool = False) -> str:
+        classes = ["calendar-pin", f"is-{html.escape(kind, quote=True)}"]
+        if highlighted:
+            classes.append("is-highlighted")
         return (
-            f'<span class="calendar-pin is-{html.escape(kind, quote=True)}">'
+            f'<span class="{" ".join(classes)}">'
             '<span class="pin-dot" aria-hidden="true"></span>'
             "<span>"
             f"<strong>{html.escape(title)}</strong>"
@@ -241,11 +293,23 @@ def schedule_calendar_embed(markdown: str = "") -> str:
         ]
         for day, slot, _label, _meta in SCHEDULE_COLUMNS:
             events = week.get(slot, {}).get(day, [])
-            content = "".join(render_event(*event) for event in events)
+            content = "".join(
+                render_event(
+                    *event,
+                    highlighted=highlight_updates
+                    and (week["label"], day, slot, *event) in highlighted_events,
+                )
+                for event in events
+            )
             empty_class = " is-empty" if not content else ""
             multiple_class = " has-multiple" if len(events) > 1 else ""
+            highlight_class = (
+                " is-highlighted-empty"
+                if highlight_updates and (week["label"], day, slot) in highlighted_empty_cells
+                else ""
+            )
             cells.append(
-                f'<td class="calendar-cell{empty_class}{multiple_class}">'
+                f'<td class="calendar-cell{empty_class}{multiple_class}{highlight_class}">'
                 f'<div class="calendar-cell-inner">{content}</div>'
                 "</td>"
             )
@@ -273,11 +337,19 @@ def schedule_calendar_embed(markdown: str = "") -> str:
             for _day, _slot, label, meta in SCHEDULE_COLUMNS
         )
         + "</tr></thead>"
-        "<tbody>"
+        + "<tbody>"
         + "".join(rows)
         + "</tbody></table>"
-        f'<p class="calendar-note">{html.escape(SCHEDULE_CALENDAR_NOTE)}</p>'
-        "</section>"
+        + (
+            '<p class="calendar-change-note">'
+            "<strong>Updated:</strong> Fri 29 May help is 9-10; interim report and results are due 2pm; "
+            "Fri 12 Jun has no help or mandatory session."
+            "</p>"
+            if highlight_updates
+            else ""
+        )
+        + f'<p class="calendar-note">{html.escape(SCHEDULE_CALENDAR_NOTE)}</p>'
+        + "</section>"
     )
 
 
@@ -650,6 +722,7 @@ def render_page(
     html_title = SITE_TITLE if title == SITE_TITLE else f"{title} | {SITE_TITLE}"
     release_summary = render_release_summary() if page.output == "index.html" else ""
     toc = render_toc(doc)
+    article_class = "doc-content faq-content" if page.output == "faq.html" else "doc-content"
     if source_base_url:
         source_href = f"{source_base_url.rstrip('/')}/{page.source}"
     elif source_relative_base and source_relative_base != ".":
@@ -684,7 +757,7 @@ def render_page(
     <main id="main" class="page doc-page">
 {render_hero(page, doc)}{release_summary}
       <div class="doc-shell">
-{toc}        <article class="doc-content">
+{toc}        <article class="{article_class}">
 {indent(doc.body, 10)}
         </article>
       </div>
@@ -709,8 +782,17 @@ def render_page(
 
 
 def indent(text: str, spaces: int) -> str:
+    """Indent rendered HTML without changing visible whitespace in code blocks."""
     prefix = " " * spaces
-    return "\n".join(prefix + line if line else line for line in text.splitlines())
+    lines: list[str] = []
+    in_pre = False
+    for line in text.splitlines():
+        lines.append(line if in_pre or not line else prefix + line)
+        if re.search(r"<pre\b", line) and not re.search(r"</pre>", line):
+            in_pre = True
+        if in_pre and re.search(r"</pre>", line):
+            in_pre = False
+    return "\n".join(lines)
 
 
 def build_site(output: Path, *, source_base_url: str | None = None) -> None:
