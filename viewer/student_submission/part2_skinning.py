@@ -11,10 +11,12 @@ def make_one_hot_skinning_weights(weights: np.ndarray) -> np.ndarray:
     #Returns 1D Array of dominant joints for each vertex 
     dominant_joints = np.argmax(weights, axis=1)
     # 1D Array [1,2,...,N], used to index joints in next step
-    vertex_indices = np.arange(weights.shape[0])
+    vertices = np.arange(weights.shape[0])
 
     # Set the dominant joint's weight to 1.0
-    one_hot[vertex_indices, dominant_joints] = 1.0
+    one_hot[vertices, dominant_joints] = 1.0
+
+    return one_hot
 
 
 def skin_smpl_mesh(
