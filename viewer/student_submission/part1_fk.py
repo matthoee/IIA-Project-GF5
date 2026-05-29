@@ -28,22 +28,24 @@ def forward_kinematics(
     )
     world_positions = np.zeros((joint_count, 3), dtype=np.float32)
 
-    # Default traversal order
+    # Create traversal order
     if topological_order is None:
-        children = [[] for i in range(joint_count)]
-        roots = []
+        children = [[] for i in range(joint_count)] #store list of children for each node
+        roots = [] #store roots
 
-        for i, joint in enumerate(joints):
+        #loop over all joints and append children and roots 
+        for i in range(len(joints)):
+        
+            parent = joints[i].parent
 
-            parent = joint.parent
-
-            if parent == -1 or parent is None:
+            if parent == -1:
                 roots.append(i)
             else:
                 children[parent].append(i)
 
         order = []
 
+        #DFS create orderr
         while roots:
             current = roots.pop()
             order.append(current)
@@ -59,7 +61,7 @@ def forward_kinematics(
         parent_number = joint.parent
 
         # Root joint
-        if parent_number is None or parent_number == -1:
+        if parent_number == -1:
 
             world_rotations[joint_number] = local_rotations[joint_number]
 
